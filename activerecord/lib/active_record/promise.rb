@@ -4,6 +4,45 @@ module ActiveRecord
   class Promise < BasicObject
     undef_method :==, :!, :!=
 
+    class << self
+      # Returns an already resolved `ActiveRecord::Promise` holding +value+.
+      #
+      # Useful when a method returns either a pending query or a value it already
+      # has, such as a cached result:
+      #
+      # ```
+      # def async_title
+      #   return ActiveRecord::Promise.resolved(@title) if @title
+      #
+      #   Post.async_pick(:title)
+      # end
+      # ```
+      def resolved(value)
+        new(FutureResult::Complete.new(value), nil)
+      end
+
+      # Returns an `ActiveRecord::Promise` whose value is the array of the values
+      # of +promises+, in the same order.
+      #
+      # Accessing `#value` waits for every promise, then raises the error of the
+      # first one that failed, in the order given. Unlike JavaScript's
+      # `Promise.all`, it does not raise as soon as one promise fails, so no query
+      # is left running in the background.
+      #
+      # ```
+      # ActiveRecord::Promise.all([Post.async_count, Comment.async_count]).then(&:sum).value
+      # # => 42
+      # ```
+      def all(promises)
+        promises = promises.to_a.dup
+        promises.each do |promise|
+          raise ArgumentError, "expected an ActiveRecord::Promise, got #{promise.class}" unless Promise === promise
+        end
+
+        new(All.new(promises), nil)
+      end
+    end
+
     def initialize(future_result, block) # :nodoc:
       @future_result = future_result
       @block = block
@@ -12,6 +51,10 @@ module ActiveRecord
     # Returns whether the associated query is still being executed or not.
     def pending?
       @future_result.pending?
+    end
+
+    def canceled? # :nodoc:
+      @future_result.canceled?
     end
 
     # Returns the query result.
@@ -62,6 +105,32 @@ module ActiveRecord
         end
       end
 
+      class All # :nodoc:
+        def initialize(promises)
+          @promises = promises
+        end
+
+        def pending?
+          @promises.any?(&:pending?)
+        end
+
+        def canceled?
+          @promises.any?(&:canceled?)
+        end
+
+        def result
+          error = nil
+          values = @promises.map do |promise|
+            promise.value
+          rescue => e
+            error ||= e
+          end
+          raise error if error
+
+          values
+        end
+      end
+
       class Complete < self # :nodoc:
         attr_reader :value
 
@@ -74,6 +143,10 @@ module ActiveRecord
         end
 
         def pending?
+          false
+        end
+
+        def canceled?
           false
         end
 

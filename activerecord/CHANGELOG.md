@@ -1,3 +1,16 @@
+*   Add `ActiveRecord::Promise.resolved` and `ActiveRecord::Promise.all`.
+
+    `ActiveRecord::Promise.resolved` wraps a value already at hand in a promise, and
+    `ActiveRecord::Promise.all` combines several promises into one whose value is the
+    array of their values. It waits for every promise before raising the first error.
+
+    ```ruby
+    ActiveRecord::Promise.all([Post.async_count, Comment.async_count]).then(&:sum).value
+    # => 42
+    ```
+
+    *Leonardo Serra*
+
 *   Fix grouped calculations and `pluck` returning uncast values for a column
     unknown to the schema.
 
